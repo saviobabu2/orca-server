@@ -1,0 +1,261 @@
+const bcrypt = require('bcrypt');
+const redis = require("../helper/redisClient").default;
+const jwt = require("jsonwebtoken");
+const { generateOTP, sendOTP } = require("../helper/twiloOtp");
+const User = require('../models/UserModel');
+const { OAuth2Client } = require("google-auth-library");
+
+const { generateResetToken, generateToken, validateResetToken } = require('../helper/jwtHelper');
+const { log } = require('node:console');
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+
+
+
+
+// Register User and Send OTP
+const registerUser = async (req, res) => {
+  try {
+    const { name, email, password, phone } = req.body;
+
+    // Validate input
+    if (!name || !email || !password || !phone) {
+      return res.status(400).json({ error: "All required fields must be filled." });
+    }
+
+    // Check if the email or phone number is already registered
+    const existingUser = await User.findOne({ $or: [{ email }, { phone }] });
+    if (existingUser) {
+      return res.status(400).json({ error: "Email or Mobile Number already registered." });
+    }
+
+    // Generate OTP
+    const otp = generateOTP();
+
+
+    // Store OTP in Redis with a 10-minute expiration
+    await redis.set(`otp:${phone}`, otp, "EX", 600);
+
+    // Send OTP via SMS
+    await sendOTP(phone, otp);
+
+    // Temporarily store user data in Redis for verification later
+    await redis.set(
+      `tempUser:${phone}`,
+      JSON.stringify({ name, email, password, phone }),
+      "EX",
+      600 // Expiration time matches OTP expiry
+    );
+
+    res.status(200).json({
+      message: "OTP sent successfully. Please verify to complete registration.",
+    });
+    console.log(otp,res.status,'ippo ariyam');
+    
+  } catch (error) {
+    console.error("Error during user registration:", error);
+    res.status(500).json({ error: "An error occurred during registration. Please try again later." });
+  }
+};
+
+
+const verifyOtpAndRegister = async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+
+    // Validate input
+    if (!phone || !otp) {
+      return res.status(400).json({ error: "Phone number and OTP are required." });
+    }
+
+    // Retrieve the OTP from Redis
+    const storedOtp = await redis.get(`otp:${phone}`);
+    if (!storedOtp) {
+      return res.status(400).json({ error: "OTP expired or not found. Please request a new OTP." });
+    }
+
+    // Verify the OTP
+    if (storedOtp !== otp) {
+      return res.status(400).json({ error: "Invalid OTP. Please try again." });
+    }
+
+    // Retrieve user details from Redis
+    const userData = await redis.get(`tempUser:${phone}`);
+    console.log("Retrieved userData:", userData); // Debug log
+
+    if (!userData) {
+      return res.status(400).json({ error: "User data expired. Please register again." });
+    }
+
+    // Parse the userData
+    let parsedData;
+    try {
+      parsedData = JSON.parse(userData);
+    } catch (err) {
+      console.error("Failed to parse userData:", err);
+      return res.status(500).json({ error: "Invalid user data stored. Please register again." });
+    }
+
+    const { name, email, password } = parsedData;
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create and save the user
+    const newUser = new User({
+      name,
+      email,
+      password: hashedPassword,
+      phone,
+    });
+    await newUser.save();
+
+    // Generate JWT tokens
+    const { token, refreshToken } = generateToken(name, email, "user");
+
+    // Clean up Redis
+    await redis.del(`otp:${phone}`);
+    await redis.del(`tempUser:${phone}`);
+
+    res.status(201).json({
+      message: "Registration successful! Redirecting to home page.",
+      token,
+      refreshToken,
+      newUser,
+    });
+  } catch (error) {
+    console.error("Error verifying OTP:", error);
+    res.status(500).json({ error: "Failed to verify OTP. Please try again later." });
+  }
+};
+
+
+
+
+// Resend OTP
+const resendOtp = async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    // Validate phone number
+    if (!phone) {
+      return res.status(400).json({ error: "Phone number is required." });
+    }
+
+    // Check if user data exists in Redis
+    const userData = await redis.get(`tempUser:${phone}`);
+    if (!userData) {
+      return res.status(400).json({ error: "User data expired. Please register again." });
+    }
+
+    // Generate a new OTP
+    const otp = generateOTP();
+
+    // Update OTP in Redis
+    await redis.set(`otp:${phone}`, otp, "EX", 600);
+
+    // Send OTP via SMS
+    await sendOTP(phone, otp);
+
+    res.status(200).json({ message: "OTP resent successfully." });
+  } catch (error) {
+    console.error("Error resending OTP:", error);
+    res.status(500).json({ error: "Failed to resend OTP. Please try again later." });
+  }
+};
+
+
+
+
+
+
+const loadLoginPage = (req, res) => {
+  try {
+    res.status(200).json({ message: 'Welcome to the Login Page!' });
+  } catch (error) {
+    console.error('Error loading login page:', error);
+    res.status(500).json({ error: 'An error occurred while loading the login page.' });
+  }
+};
+
+
+
+
+
+
+
+const login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validate required fields
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and Password are required.' });
+    }
+
+    // Check if the user exists
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid email or password.' });
+    }
+
+    // Validate the password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({ error: 'Invalid email or password.' });
+    }
+
+    // Set the user in the session (or use JWT for token-based authentication)
+    req.session.user = {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+    };
+
+    // Respond with success
+    res.status(200).json({ message: 'Login successful!', user: req.session.user });
+  } catch (error) {
+    console.error('Error during login:', error);
+    res.status(500).json({ error: 'An error occurred during login. Please try again later.' });
+  }
+};
+
+
+
+
+
+
+
+
+const loadHomePage = (req, res) => {
+  try {
+    res.status(200).json({ message: 'Welcome to the Home Page!' });
+  } catch (error) {
+    console.error('Error loading home page:', error);
+    res.status(500).json({ error: 'An error occurred while loading the home page.' });
+  }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+module.exports = { registerUser,
+  verifyOtpAndRegister,
+  resendOtp,
+  loadLoginPage,
+  login,
+  loadHomePage
+ };
