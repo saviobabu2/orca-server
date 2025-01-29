@@ -4,7 +4,7 @@ const jwt = require("jsonwebtoken");
 const { generateOTP, sendOTP } = require("../helper/twiloOtp");
 const User = require('../models/UserModel');
 const { OAuth2Client } = require("google-auth-library");
-
+const Competition = require('../models/competitionsModel'); 
 const { generateResetToken, generateToken, validateResetToken } = require('../helper/jwtHelper');
 const { log } = require('node:console');
 
@@ -34,8 +34,8 @@ const registerUser = async (req, res) => {
     const otp = generateOTP();
 
 
-    // Store OTP in Redis with a 10-minute expiration
-    await redis.set(`otp:${phone}`, otp, "EX", 600);
+    await redis.setex(`otp:${email}`, 300, otp); // 5-minute expiry for admin
+
 
     // Send OTP via SMS
     await sendOTP(phone, otp);
@@ -241,10 +241,58 @@ const loadHomePage = (req, res) => {
 
 
 
+const loadCompetitionsPage = async (req, res) => {
+  try {
+    // Fetch all active competitions from the database, sorted by date (latest first)
+    const competitions = await Competition.find({ status: 'active' }).sort({ date: -1 });
+
+    if (!competitions || competitions.length === 0) {
+      return res.status(200).json({
+        message: 'No competitions available at the moment.',
+        competitions: [],
+      });
+    }
+    
+    return res.status(200).json({
+      message: 'Competitions loaded successfully.',
+      competitions,
+    });
+  } catch (error) {
+    console.error('Error loading competitions page:', error);
+    return res.status(500).json({
+      message: 'An error occurred while loading competitions.',
+      error: error.message,
+    });
+  }
+};
 
 
 
+const loadCompetitionDetailsPage = async (req, res) => {
+  try {
+    const { competitionId } = req.params; // Get competition ID from URL parameters
 
+    // Fetch the competition details based on the provided ID
+    const competition = await Competition.findById(competitionId);
+
+    if (!competition) {
+      return res.status(404).json({
+        message: 'Competition not found.',
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Competition details loaded successfully.',
+      competition,
+    });
+  } catch (error) {
+    console.error('Error loading competition details:', error);
+    return res.status(500).json({
+      message: 'An error occurred while loading competition details.',
+      error: error.message,
+    });
+  }
+};
 
 
 
@@ -257,5 +305,8 @@ module.exports = { registerUser,
   resendOtp,
   loadLoginPage,
   login,
-  loadHomePage
+  loadHomePage,
+  loadCompetitionsPage,
+  loadCompetitionDetailsPage 
  };
+ 
