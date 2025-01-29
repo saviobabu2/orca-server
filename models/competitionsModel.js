@@ -15,16 +15,16 @@ const competitionSchema = new mongoose.Schema({
   },
   image: {
     type: String,
-    required: true,
+    // required: true,
     trim: true
   },
   time: {
     type: String,
     required: true,
-    validate: {
-      validator: (value) => /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(value), // Validates time format HH:MM
-      message: 'Time must be in HH:MM format.'
-    }
+    // validate: {
+    //   validator: (value) => /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(value), // Validates time format HH:MM
+    //   message: 'Time must be in HH:MM format.'
+    // }
   },
   date: {
     type: Date,
@@ -112,6 +112,12 @@ const competitionSchema = new mongoose.Schema({
     trim: true,
     maxlength: 500,
     message: 'Description must not exceed 500 characters.'
+  },
+  status: {
+    type: String,
+    enum: ['active', 'inactive'],
+    default: 'inactive',
+    message: 'Status must be either "active" or "inactive".'
   }
 }, { timestamps: true });
 

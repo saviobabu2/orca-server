@@ -28,13 +28,10 @@ app.use(express.static(path.join(__dirname, "client/build")));
 
 // Routes
 const userRoutes = require("./routes/userRoutes");
-
-
-
-// const adminRoutes = require("./routes/adminRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 
 app.use("/api/user", userRoutes);
-// app.use("/api/admin", adminRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Serve React front-end
 app.get("*", (req, res) => {

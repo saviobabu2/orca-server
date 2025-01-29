@@ -18,5 +18,10 @@ router.post("/resend-otp", userController.resendOtp);
 
 
 
+
+router.get("/competitions", userController.loadCompetitionsPage);
+router.get("/competition-Details", userController.loadCompetitionDetailsPage );
+
+
 // Export the router
 module.exports = router;

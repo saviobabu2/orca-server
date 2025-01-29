@@ -3,10 +3,9 @@ import Redis from "ioredis";
 // Create Redis client instance
 const redis = new Redis({
   host: "127.0.0.1", // Redis server host
-  port: 6379,        // Redis server port
-  password: "YOUR_REDIS_PASSWORD", // Optional: Set password if Redis is password-protected
+  port: 6379,        // Default Redis port
   retryStrategy(times) {
-    // Retry strategy to reconnect in case of failure
+    // Retry strategy for reconnecting in case of failure
     const delay = Math.min(times * 50, 2000); // Exponential backoff
     return delay;
   },
