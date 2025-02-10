@@ -13,7 +13,6 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 
 
-
 // Register User and Send OTP
 const registerUser = async (req, res) => {
   try {
@@ -21,43 +20,49 @@ const registerUser = async (req, res) => {
 
     // Validate input
     if (!name || !email || !password || !phone) {
-      return res.status(400).json({ error: "All required fields must be filled." });
+      return res.status(400).json({ error: "All required fields must be filled." }); // Return immediately after sending the response
     }
 
     // Check if the email or phone number is already registered
     const existingUser = await User.findOne({ $or: [{ email }, { phone }] });
     if (existingUser) {
-      return res.status(400).json({ error: "Email or Mobile Number already registered." });
+      return res.status(400).json({ error: "Email or Mobile Number already registered." }); // Return immediately after sending the response
     }
 
-    // Generate OTP
     const otp = generateOTP();
 
+    // Correctly set OTP with expiration time (300 seconds = 5 minutes)
+    const otpResult = await redis.set(`otp:${phone}`, otp, 'EX', 300);
+    console.log("OTP set successfully in Redis:", otpResult);
 
-    await redis.setex(`otp:${email}`, 300, otp); // 5-minute expiry for admin
-
-
-    // Send OTP via SMS
+    // Send OTP via SMS (you may want to check here that the SMS was successfully sent)
     await sendOTP(phone, otp);
 
     // Temporarily store user data in Redis for verification later
-    await redis.set(
+    const userDataResult = await redis.set(
       `tempUser:${phone}`,
       JSON.stringify({ name, email, password, phone }),
       "EX",
-      600 // Expiration time matches OTP expiry
+      600 // 10-minute expiration time for user data
     );
+    console.log("User data set successfully in Redis:", userDataResult);
 
-    res.status(200).json({
+    // Send response to client
+    return res.status(200).json({
       message: "OTP sent successfully. Please verify to complete registration.",
-    });
-    console.log(otp,res.status,'ippo ariyam');
-    
+    }); // Return immediately after sending the response
+
   } catch (error) {
     console.error("Error during user registration:", error);
-    res.status(500).json({ error: "An error occurred during registration. Please try again later." });
+    return res.status(500).json({ error: "An error occurred during registration. Please try again later." }); // Ensure response is sent only once
   }
 };
+
+
+
+
+
+
 
 
 const verifyOtpAndRegister = async (req, res) => {
@@ -71,7 +76,10 @@ const verifyOtpAndRegister = async (req, res) => {
 
     // Retrieve the OTP from Redis
     const storedOtp = await redis.get(`otp:${phone}`);
+    console.log("Stored OTP from Redis:", storedOtp);
+
     if (!storedOtp) {
+      console.log(`No OTP found for phone number: ${phone}`);
       return res.status(400).json({ error: "OTP expired or not found. Please request a new OTP." });
     }
 
@@ -82,7 +90,7 @@ const verifyOtpAndRegister = async (req, res) => {
 
     // Retrieve user details from Redis
     const userData = await redis.get(`tempUser:${phone}`);
-    console.log("Retrieved userData:", userData); // Debug log
+    console.log("Retrieved userData from Redis:", userData); // Debug log
 
     if (!userData) {
       return res.status(400).json({ error: "User data expired. Please register again." });
@@ -98,6 +106,7 @@ const verifyOtpAndRegister = async (req, res) => {
     }
 
     const { name, email, password } = parsedData;
+    console.log("Parsed Data:", name, email, password);
 
     // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -164,6 +173,8 @@ const resendOtp = async (req, res) => {
     res.status(500).json({ error: "Failed to resend OTP. Please try again later." });
   }
 };
+
+
 
 
 

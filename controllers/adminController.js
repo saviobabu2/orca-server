@@ -10,9 +10,7 @@ const cron = require('node-cron');
 
 
 
-
-
-
+// Register Admin and Send OTP
 const registerAdmin = async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -23,15 +21,22 @@ const registerAdmin = async (req, res) => {
       return res.status(400).json({ error: "Admin already exists" });
     }
 
+    // Temporarily store admin data in Redis for verification later
+    await redis.set(
+      `tempAdmin:${email}`,
+      JSON.stringify({ name, email, password }),
+      "EX",
+      600 // 10-minute expiration time for user data
+    );
+
     // Generate OTP
     const otp = generateOTP();
 
-  
-    await redis.set(`otp:${email}`, otp, "EX", 300); 
+    // Store OTP in Redis with expiration of 5 minutes
+    await redis.set(`otp:${email}`, otp, "EX", 300);
 
-   
     // Send OTP via email
-    await sendEmailWithOTP(email, otp);
+    await sendEmailWithOTP(email, otp, password, name);
 
     return res.status(200).json({ message: "OTP sent to your email for verification." });
   } catch (error) {
@@ -42,37 +47,59 @@ const registerAdmin = async (req, res) => {
 
 
 
-// Step 2: OTP Verification and Create Admin
+// Verify OTP and Create Admin
 const verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
 
     // Retrieve OTP from Redis
-    const storedOtp = await redis.get(email);
+    const storedOtp = await redis.get(`otp:${email}`);
+    console.log("Stored OTP from Redis:", storedOtp);
+
+    // Retrieve user data from Redis
+    const userData = await redis.get(`tempAdmin:${email}`);
+    console.log("Retrieved userData:", userData);
 
     if (!storedOtp || storedOtp !== otp) {
       return res.status(400).json({ error: "Invalid or expired OTP" });
     }
 
-    // OTP verified; create the admin
-    const { name, password } = req.body;
+    if (!userData) {
+      return res.status(400).json({ error: "User data expired. Please register again." });
+    }
+
+    // Parse the user data from Redis
+    let parsedData;
+    try {
+      parsedData = JSON.parse(userData);
+    } catch (err) {
+      console.error("Failed to parse userData:", err);
+      return res.status(500).json({ error: "Invalid user data stored. Please register again." });
+    }
+
+    const { name, email: userEmail, password } = parsedData;
+    console.log("Parsed Data:", name, userEmail, password);
 
     // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create a new admin
-    const newAdmin = new Admin({ name, email, password: hashedPassword });
+    const newAdmin = new Admin({ name, email: userEmail, password: hashedPassword });
     await newAdmin.save();
 
-    // Remove OTP from Redis after successful registration
-    await redis.del(email);
+    // Remove OTP and temp user data from Redis after successful registration
+    await redis.del(`otp:${email}`);
+    await redis.del(`tempAdmin:${email}`);
 
-    return res.status(201).json({ message: "Admin registered successfully",newAdmin });
+    return res.status(201).json({ message: "Admin registered successfully", newAdmin });
   } catch (error) {
     console.error("Error verifying OTP:", error);
     return res.status(500).json({ error: "Internal server error" });
   }
-};
+}
+
+
+
 
 // Resend OTP
 const resendOTP = async (req, res) => {
